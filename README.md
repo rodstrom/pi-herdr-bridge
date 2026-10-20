@@ -21,14 +21,11 @@ pi extension next to herdr's own managed `herdr-agent-state.ts` integration
 
 ## Install
 
-```sh
-git clone <this-repo> ~/Developer/pi-herdr-bridge
-ln -s ~/Developer/pi-herdr-bridge/herdr-bridge.ts ~/.pi/agent/extensions/herdr-bridge.ts
-```
+pi install git:github.com/rodstrom/pi-herdr-bridge
 
-(With Stow-managed dotfiles, put the symlink at
-`~/.dotfiles/pi/.pi/agent/extensions/herdr-bridge.ts` instead — `~/.pi` is a
-Stow link into that tree.)
+pi list shows configured packages. After pushing changes, run
+pi update --extensions to reconcile the checkout, then reload your pi
+session. pi remove git:github.com/rodstrom/pi-herdr-bridge uninstalls.
 
 ## Requirements
 
