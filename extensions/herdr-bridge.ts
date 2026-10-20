@@ -32,9 +32,17 @@
 // @ts-nocheck
 
 import { spawn } from "node:child_process";
+import { appendFileSync } from "node:fs";
 
 const HERDR_BIN = process.env.HERDR_BIN_PATH || "herdr";
 const PANE_ID = process.env.HERDR_PANE_ID;
+
+function log(msg) {
+  try {
+    appendFileSync("/tmp/pi/herdr-bridge.log", new Date().toISOString() + " " + msg + "\n");
+  } catch {}
+}
+log("extension loaded: HERDR_ENV=" + process.env.HERDR_ENV + " PANE_ID=" + PANE_ID);
 
 function herdrEnabled() {
   return process.env.HERDR_ENV === "1" && !!PANE_ID;
@@ -101,6 +109,7 @@ function compactSetLabel() {
 function doCompactClear() {
   if (!compactingReported) return;
   compactingReported = false;
+  log("clearing labels");
   void run([
     "pane",
     "report-metadata",
@@ -112,6 +121,7 @@ function doCompactClear() {
 }
 
 function compactEnd(_event: unknown, _ctx: any) {
+  log("compactEnd: reported=" + compactingReported);
   if (!compactingReported) return;
   doCompactClear();
 }
@@ -202,7 +212,8 @@ export default function (pi) {
   });
 
   // 2. Compacting state
-  pi.on("session_before_compact", (_event, _ctx) => {
+  pi.on("session_before_compact", (_event, ctx) => {
+    log("session_before_compact: isIdle=" + ctx?.isIdle?.() + " herdrEnabled=" + herdrEnabled());
     // Display-only label: the semantic state is untouched, so the managed
     // integration keeps lifecycle authority no matter when compaction runs
     // (manual /compact or mid-run auto-compact).
