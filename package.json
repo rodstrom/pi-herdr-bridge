@@ -1,0 +1,6 @@
+{
+  "name": "pi-herdr-bridge",
+  "version": "0.1.0",
+  "description": "pi <-> herdr glue: blocked state, compacting label, pane/agent name sync",
+  "keywords": ["pi-package"]
+}
