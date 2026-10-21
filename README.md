@@ -27,6 +27,8 @@ pi list shows configured packages. After pushing changes, run
 pi update --extensions to reconcile the checkout, then reload your pi
 session. pi remove git:github.com/rodstrom/pi-herdr-bridge uninstalls.
 
+Important: in ~/.pi/agent/settings.json, this package must be listed BEFORE the BetterCompaction package in the "packages" array. Pi runs session_before_compact handlers sequentially in load order, and BetterCompaction performs its entire LLM summarization inside its handler; if it loads first, the compacting label is only set in the milliseconds before compaction finishes.
+
 ## Requirements
 
 - Runs only inside herdr (`HERDR_ENV=1` + `HERDR_PANE_ID` set); no-ops elsewhere.
