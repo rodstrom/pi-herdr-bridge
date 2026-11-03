@@ -162,6 +162,27 @@ async function nameSyncTick() {
   }
 }
 
+// pi writes the terminal title only at startup and on core-initiated renames;
+// a programmatic pi.setSessionName() (pi-auto-session-titles) never refreshes it,
+// so the OSC title can sit at "<cwd>" forever. Re-assert pi's own format,
+// "<name> - <cwd basename>" (no product prefix — we strip that at write time).
+function assertNamedTitle(ctx: any) {
+  let name: string | undefined;
+  try {
+    name = ctx?.sessionManager?.getSessionName?.() || undefined;
+  } catch {
+    return;
+  }
+  if (!name) return;
+  const base = (process.cwd() || "").split(/[\\/]/).filter(Boolean).pop() || "";
+  const title = base ? `${name} - ${base}` : name;
+  try {
+    process.stdout.write(`\x1b]0;${title}\x07`);
+  } catch {
+    // never let title cosmetics break the session
+  }
+}
+
 function startNameSync() {
   if (nameSyncStarted || !herdrEnabled()) return;
   nameSyncStarted = true;
@@ -177,6 +198,14 @@ function startNameSync() {
 }
 
 export default function (pi) {
+  // Strip pi's own OSC title prefix so herdr shows just "<task> - <repo>".
+  // Pi emits the whole OSC in one stdout write; a prefix split across writes
+  // is left as-is (shortcut: no cross-chunk buffering, upgrade if titles flake).
+  const TITLE_PREFIX = /(\x1b\][02];)(?:π|pi|Pi-Bolt) - /gi;
+  const origWrite = process.stdout.write.bind(process.stdout);
+  process.stdout.write = (chunk: any, ...rest: any[]) =>
+    origWrite(typeof chunk === "string" ? chunk.replace(TITLE_PREFIX, "$1") : chunk, ...rest);
+
   // 1. Blocked state
   pi.on("ui_prompt_start", (event) => {
     const title =
@@ -214,6 +243,13 @@ export default function (pi) {
   pi.on("session_compact_failed", compactEnd);
 
   // 3. Auto-naming + sync (TUI only; fire-and-forget loop)
+  // Fires whenever the session name changes (manual rename or setSessionName);
+  // pi's own title write on manual rename is identical, so this is idempotent.
+  pi.on("session_info_changed", (_event, ctx) => {
+    if (ctx?.mode !== "tui") return;
+    assertNamedTitle(ctx);
+  });
+
   pi.on("session_start", (_event, ctx) => {
     if (ctx?.mode !== "tui") return;
     // Self-heal: clear any stale "compacting" label left by a previous
@@ -228,5 +264,7 @@ export default function (pi) {
       "--clear-state-labels",
     ]);
     startNameSync();
+    // Reload/resume of a named session: re-assert the title immediately.
+    assertNamedTitle(ctx);
   });
 }

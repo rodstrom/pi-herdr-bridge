@@ -18,6 +18,7 @@ pi extension next to herdr's own managed `herdr-agent-state.ts` integration
 3. **Auto-naming + name sync** — the pane label is the source of truth; a
    10s loop reconciles the herdr agent name with it (derives a short label
    from the cwd + workspace/pane numbers when both are unnamed).
+4. **Terminal title** — strips pi's `π - ` / `Pi-Bolt - ` prefix from the OSC title written to the terminal (stdout write filter), and re-asserts `"<name> - <cwd>"` when a session is renamed programmatically (`session_info_changed`) or on session start — pi only repaints the title on core-initiated renames, so auto-generated session names otherwise never appear in it.
 
 ## Install
 
