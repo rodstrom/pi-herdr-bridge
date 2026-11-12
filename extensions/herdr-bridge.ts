@@ -30,18 +30,24 @@
 //      - label changed -> agent name follows (within one tick)
 //      - label cleared -> agent name is cleared
 //
-// 4. Session identity: herdr records pane.agent_session from reports sent under
-//    its reserved pi source (herdr:pi) and only when the report names a recognized
-//    session start ("startup"|"resume"|"compact"|… — session_start_source_is_recognized
-//    in herdr's src/terminal/state.rs). pi's own herdr integration omits that
-//    field, so the report is parked as suppressed and the pane gets no session
-//    identity. The bridge reports it itself on session_start, passing pi's session
-//    file plus `pi --session <file>` as the restore command; herdr requires a bare
-//    command name and types it into the pane's shell, so whatever the user's PATH
-//    or aliases map pi to (including a fork) is what restarts.
+// 4. Session identity + lifecycle for pi-bolt panes: herdr stores pane.agent_session
+//    only from its official (herdr:pi, pi) source/agent pair, and pane state follows
+//    whichever reporter last held pane authority. pi-bolt ships its own reporter
+//    (source/agent "pi-bolt") that only sends lifecycle, never a session report, and
+//    herdr's managed pi integration is not loaded by pi-bolt, so nothing ever claims
+//    (herdr:pi, pi) and session viewers find no session. The bridge therefore speaks
+//    for that official pair itself: session on session_start/agent_start, working/
+//    idle/blocked from pi's own events, all on one seq counter of its own. herdr keeps
+//    a single seq per report source and drops anything not strictly newer (accept_hook_
+//    report in src/terminal/state.rs), which is why both travel together: a lone
+//    session report used to take pi authority and then pi-bolt's own lifecycle reports
+//    were foreign, freezing the pane at idle. The bridge goes quiet as soon as a
+//    request under "herdr:pi" is seen in-process (stock pi: herdr's managed integration
+//    owns that stream and a second one would jump its counter).
 // @ts-nocheck
 
 import { spawn } from "node:child_process";
+import { Socket } from "node:net";
 
 const HERDR_BIN = process.env.HERDR_BIN_PATH || "herdr";
 const PANE_ID = process.env.HERDR_PANE_ID;
@@ -193,17 +199,41 @@ function assertNamedTitle(ctx: any) {
   }
 }
 
-// 4. Session identity
-// herdr stores pane.agent_session only from its reserved pi source and only
-// with a recognized session_start_source, both of which pi's own integration
-// leaves out. Restore argv must be a bare command name (herdr validates it and
-// types it into the pane's shell), so PATH/aliases keep working after a herdr
-// restart. Reported at session start only (shortcut: upgrade if a mid-run
-// session switch ever needs a re-report).
-function reportAgentSession(ctx: any) {
-  if (!herdrEnabled()) return;
-  const file = ctx?.sessionManager?.getSessionFile?.() || process.env.PI_SESSION_FILE;
-  if (typeof file !== "string" || !file.endsWith(".jsonl")) return;
+// 4. Session identity + lifecycle (official herdr:pi pair)
+// pi-bolt's built-in reporter (source/agent pi-bolt) sends lifecycle only, never a
+// session report, and herdr's managed pi integration is not loaded by pi-bolt, so
+// nothing claims (herdr:pi, pi) and herdr has no pane.agent_session.
+let officialSourceSeen = false;
+let lifecycleSeq = Math.floor(Date.now() * 1000);
+
+// Once any socket request under "herdr:pi" is seen in this process, herdr's managed
+// pi integration owns the stream: reporting from here would jump its per-source seq
+// counter and drop every later report, so the bridge stays out.
+function watchOfficialSource() {
+  if ((Socket.prototype.write as any).herdrWatch) return;
+  const write = Socket.prototype.write as any;
+  Socket.prototype.write = function (...args: any[]) {
+    const body = args[0];
+    if (typeof body === "string" && body.indexOf('"herdr:pi"') !== -1) officialSourceSeen = true;
+    return write.apply(this, args);
+  };
+  (Socket.prototype.write as any).herdrWatch = true;
+}
+
+function sessionFileOf(ctx: any) {
+  let file: unknown;
+  try {
+    file = ctx?.sessionManager?.getSessionFile?.();
+  } catch {
+    return undefined;
+  }
+  return typeof file === "string" && file.endsWith(".jsonl") ? file : undefined;
+}
+
+function reportSession(ctx: any) {
+  if (officialSourceSeen || !herdrEnabled()) return;
+  const file = sessionFileOf(ctx);
+  if (!file) return;
   void run([
     "pane",
     "report-agent-session",
@@ -213,7 +243,7 @@ function reportAgentSession(ctx: any) {
     "--agent",
     "pi",
     "--seq",
-    String(Date.now() * 1000),
+    String(++lifecycleSeq),
     "--session-start-source",
     "startup",
     "--agent-session-path",
@@ -223,6 +253,26 @@ function reportAgentSession(ctx: any) {
     "--session",
     file,
   ]);
+}
+
+function reportState(state: string, ctx?: any) {
+  if (officialSourceSeen || !herdrEnabled()) return;
+  const args = [
+    "pane",
+    "report-agent",
+    PANE_ID,
+    "--source",
+    "herdr:pi",
+    "--agent",
+    "pi",
+    "--seq",
+    String(++lifecycleSeq),
+    "--state",
+    state,
+  ];
+  const file = sessionFileOf(ctx);
+  if (file) args.push("--agent-session-path", file);
+  void run(args);
 }
 
 function startNameSync() {
@@ -240,6 +290,10 @@ function startNameSync() {
 }
 
 export default function (pi) {
+  // Speak for herdr's official pi source (session identity + lifecycle) unless
+  // herdr's managed pi integration is the one doing it in this process.
+  watchOfficialSource();
+
   // Strip pi's own OSC title prefix so herdr shows just "<task> - <repo>".
   // Pi emits the whole OSC in one stdout write; a prefix split across writes
   // is left as-is (shortcut: no cross-chunk buffering, upgrade if titles flake).
@@ -254,6 +308,7 @@ export default function (pi) {
       typeof event?.title === "string" && event.title.length > 0
         ? event.title.split("\n")[0].trim()
         : undefined;
+    reportState("blocked");
     try {
       pi.events.emit("herdr:blocked", {
         active: true,
@@ -264,7 +319,8 @@ export default function (pi) {
     }
   });
 
-  pi.on("ui_prompt_end", () => {
+  pi.on("ui_prompt_end", (_event, ctx) => {
+    reportState(ctx?.isIdle?.() === false ? "working" : "idle", ctx);
     try {
       pi.events.emit("herdr:blocked", { active: false });
     } catch {
@@ -308,6 +364,27 @@ export default function (pi) {
     startNameSync();
     // Reload/resume of a named session: re-assert the title immediately.
     assertNamedTitle(ctx);
-    reportAgentSession(ctx);
+    // Deferred one beat so that under stock pi herdr's own integration has already
+    // reported (tripping the watchdog) before this bridge could fork that stream.
+    setTimeout(() => {
+      reportSession(ctx);
+      reportState("idle", ctx);
+    }, 1000);
+  });
+
+  // pi-bolt's own reporter claims lifecycle under the pi-bolt source; once the bridge
+  // holds (herdr:pi, pi) authority these events are the only state source left, so
+  // mirror pi's activity here. (shortcut: session identity is re-reported on start
+  // and agent_start only; upgrade if a mid-run session switch needs a re-report.)
+  pi.on("agent_start", (_event, ctx) => {
+    setTimeout(() => {
+      reportSession(ctx);
+      reportState("working", ctx);
+    }, 1000);
+  });
+
+  pi.on("agent_settled", (_event, ctx) => {
+    if (ctx?.isIdle?.() !== true) return;
+    reportState("idle", ctx);
   });
 }
