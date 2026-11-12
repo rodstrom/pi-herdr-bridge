@@ -29,6 +29,16 @@
 //        plejd-app w2:p2 -> pla22, w1:pA -> dot1a; set on both
 //      - label changed -> agent name follows (within one tick)
 //      - label cleared -> agent name is cleared
+//
+// 4. Session identity: herdr records pane.agent_session from reports sent under
+//    its reserved pi source (herdr:pi) and only when the report names a recognized
+//    session start ("startup"|"resume"|"compact"|… — session_start_source_is_recognized
+//    in herdr's src/terminal/state.rs). pi's own herdr integration omits that
+//    field, so the report is parked as suppressed and the pane gets no session
+//    identity. The bridge reports it itself on session_start, passing pi's session
+//    file plus `pi --session <file>` as the restore command; herdr requires a bare
+//    command name and types it into the pane's shell, so whatever the user's PATH
+//    or aliases map pi to (including a fork) is what restarts.
 // @ts-nocheck
 
 import { spawn } from "node:child_process";
@@ -183,6 +193,38 @@ function assertNamedTitle(ctx: any) {
   }
 }
 
+// 4. Session identity
+// herdr stores pane.agent_session only from its reserved pi source and only
+// with a recognized session_start_source, both of which pi's own integration
+// leaves out. Restore argv must be a bare command name (herdr validates it and
+// types it into the pane's shell), so PATH/aliases keep working after a herdr
+// restart. Reported at session start only (shortcut: upgrade if a mid-run
+// session switch ever needs a re-report).
+function reportAgentSession(ctx: any) {
+  if (!herdrEnabled()) return;
+  const file = ctx?.sessionManager?.getSessionFile?.() || process.env.PI_SESSION_FILE;
+  if (typeof file !== "string" || !file.endsWith(".jsonl")) return;
+  void run([
+    "pane",
+    "report-agent-session",
+    PANE_ID,
+    "--source",
+    "herdr:pi",
+    "--agent",
+    "pi",
+    "--seq",
+    String(Date.now() * 1000),
+    "--session-start-source",
+    "startup",
+    "--agent-session-path",
+    file,
+    "--",
+    "pi",
+    "--session",
+    file,
+  ]);
+}
+
 function startNameSync() {
   if (nameSyncStarted || !herdrEnabled()) return;
   nameSyncStarted = true;
@@ -266,5 +308,6 @@ export default function (pi) {
     startNameSync();
     // Reload/resume of a named session: re-assert the title immediately.
     assertNamedTitle(ctx);
+    reportAgentSession(ctx);
   });
 }

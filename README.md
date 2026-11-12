@@ -20,6 +20,10 @@ pi extension next to herdr's own managed `herdr-agent-state.ts` integration
    from the cwd + workspace/pane numbers when both are unnamed).
 4. **Terminal title** — strips pi's `π - ` / `Pi-Bolt - ` prefix from the OSC title written to the terminal (stdout write filter), and re-asserts `"<name> - <cwd>"` when a session is renamed programmatically (`session_info_changed`) or on session start — pi only repaints the title on core-initiated renames, so auto-generated session names otherwise never appear in it.
 
+5. **Session identity** — herdr records a pane's agent session (`pane.agent_session`) only from reports sent under its reserved pi source (`herdr:pi`) and only when the report names a recognized `session_start_source` (`startup`, `resume`, `compact`, … — see `session_start_source_is_recognized` in herdr's `src/terminal/state.rs`). pi's own herdr integration omits that field, so its report is parked as suppressed and pi-bolt panes carry no session identity. On `session_start` the bridge reports it itself: `pane report-agent-session --source herdr:pi --agent pi --seq <ms*1000> --session-start-source startup --agent-session-path <pi session file> -- pi --session <file>`. The restore command is a bare `pi` because herdr validates argv that way and types it into the pane's shell — your own PATH and aliases decide what restarts, so this works unchanged for pi and for any pi-compatible fork.
+
+   Limit: herdr's sidebar *state* for these panes still comes from the pi screen manifest, which does not match pi-bolt's TUI (`herdr agent explain` keeps `fallback_reason: default_known_agent_idle_fallback`); that needs detection-manifest rules or a herdr update.
+
 ## Install
 
 pi install git:github.com/rodstrom/pi-herdr-bridge
