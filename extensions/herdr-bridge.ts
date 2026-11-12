@@ -303,12 +303,15 @@ export default function (pi) {
     origWrite(typeof chunk === "string" ? chunk.replace(TITLE_PREFIX, "$1") : chunk, ...rest);
 
   // 1. Blocked state
-  pi.on("ui_prompt_start", (event) => {
+  pi.on("ui_prompt_start", (event, ctx) => {
     const title =
       typeof event?.title === "string" && event.title.length > 0
         ? event.title.split("\n")[0].trim()
         : undefined;
-    reportState("blocked");
+    // Session-anchored like every other report: an unanchored full-lifecycle report
+    // lets herdr drop our (herdr:pi, pi) authority, and pi-bolt's own reporter then
+    // reclaims the pane label as pi-bolt.
+    reportState("blocked", ctx);
     try {
       pi.events.emit("herdr:blocked", {
         active: true,
